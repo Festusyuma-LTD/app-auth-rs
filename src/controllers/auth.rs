@@ -7,12 +7,12 @@ use crate::util::state::ServiceStateType;
 use axum::Json;
 use axum::extract::{Query, State};
 use axum::response::IntoResponse;
-use shared::response::Response;
+use shared::response::ServiceResponse;
 
 pub async fn login(
     State(state): ServiceStateType,
     Query(query): Query<LoginQuery>,
-) -> Response<LoginResponse> {
+) -> ServiceResponse<LoginResponse> {
     state
         .auth_service
         .login_url(&query.redirect_uri)
@@ -37,7 +37,7 @@ pub async fn callback(
         .map(cookies::jar_for_response)
         .unwrap_or_default();
 
-    let response: Response<AuthResponse> = result.into();
+    let response: ServiceResponse<AuthResponse> = result.into();
 
     (jar, response)
 }
@@ -48,7 +48,8 @@ pub async fn logout(
 ) -> impl IntoResponse {
     let jar = cookies::expired_jar();
 
-    let response: Response<LogoutResponse> = state
+    println!("{:#?}", jar);
+    let response: ServiceResponse<LogoutResponse> = state
         .auth_service
         .logout_url(&query.redirect_uri)
         .map(|url| LogoutResponse { url })

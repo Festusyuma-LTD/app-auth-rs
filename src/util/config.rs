@@ -1,6 +1,6 @@
 use crate::util::error::{ServiceError, ServiceResult};
 
-use shared::error::AppError;
+use shared::error::ServiceError as SharedError;
 
 pub struct Config {
     pub(crate) client_id: String,
@@ -16,15 +16,15 @@ impl Config {
     pub fn new(value: ConfigBuilder) -> ServiceResult<Self> {
         let client_id = value
             .client_id
-            .ok_or_else(|| -> AppError { ServiceError::InvalidClientId.into() })?;
+            .ok_or_else(|| -> SharedError { ServiceError::InvalidClientId.into() })?;
 
         let client_secret = value
             .client_secret
-            .ok_or_else(|| -> AppError { ServiceError::InvalidClientSecret.into() })?;
+            .ok_or_else(|| -> SharedError { ServiceError::InvalidClientSecret.into() })?;
 
         let domain = value
             .domain
-            .ok_or_else(|| -> AppError { ServiceError::InvalidDomain.into() })?;
+            .ok_or_else(|| -> SharedError { ServiceError::InvalidDomain.into() })?;
 
         Ok(Self {
             client_id,

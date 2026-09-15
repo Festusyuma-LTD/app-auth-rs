@@ -1,6 +1,6 @@
-use shared::error::AppError;
+use shared::error::ServiceError as SharedError;
 
-pub type ServiceResult<T> = Result<T, AppError>;
+pub type ServiceResult<T> = Result<T, SharedError>;
 
 pub enum ServiceError {
     InvalidClientId,
@@ -8,15 +8,15 @@ pub enum ServiceError {
     InvalidDomain,
 }
 
-impl Into<AppError> for ServiceError {
-    fn into(self) -> AppError {
+impl Into<SharedError> for ServiceError {
+    fn into(self) -> SharedError {
         let (code, message) = match self {
             ServiceError::InvalidClientId => (500, "invalid client id".into()),
             ServiceError::InvalidClientSecret => (500, "invalid client secret".into()),
             ServiceError::InvalidDomain => (500, "invalid cognito domain".into()),
         };
 
-        AppError::HttpMessage(code, message)
+        SharedError::HttpMessage(code, message)
     }
 }
 

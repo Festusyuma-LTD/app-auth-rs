@@ -7,7 +7,7 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use rand::RngCore;
 use rand::rngs::OsRng;
 use sha2::{Digest, Sha256};
-use shared::error::AppError;
+use shared::error::ServiceError as SharedError;
 use std::sync::Arc;
 use url::Url;
 
@@ -29,7 +29,7 @@ impl AuthService {
 
         let mut url = Url::parse(&format!("{domain}/login")).map_err(|e| {
             println!("{:?}", e);
-            AppError::ServerError
+            SharedError::ServerError
         })?;
 
         url.query_pairs_mut()
@@ -52,7 +52,7 @@ impl AuthService {
 
         let mut url = Url::parse(&format!("{domain}/logout")).map_err(|e| {
             println!("{:?}", e);
-            AppError::ServerError
+            SharedError::ServerError
         })?;
 
         url.query_pairs_mut()
@@ -75,7 +75,7 @@ impl AuthService {
             .build()
             .map_err(|e| {
                 println!("{:?}", e);
-                AppError::ServerError
+                SharedError::ServerError
             })?;
 
         let response = http_client
@@ -92,13 +92,13 @@ impl AuthService {
             .await
             .map_err(|e| {
                 println!("{:?}", e);
-                AppError::ServerError
+                SharedError::ServerError
             })?;
 
         let success = response.status().is_success();
         let body = response.bytes().await.map_err(|e| {
             println!("{:?}", e);
-            AppError::ServerError
+            SharedError::ServerError
         })?;
 
         if !success {
@@ -106,12 +106,12 @@ impl AuthService {
                 .map(|err| err.error_description.unwrap_or(err.error))
                 .unwrap_or_else(|_| "failed to exchange authorization code".into());
 
-            return Err(AppError::HttpMessage(400, message));
+            return Err(SharedError::HttpMessage(400, message));
         }
 
         let tokens = serde_json::from_slice::<CognitoTokens>(&body).map_err(|e| {
             println!("{:?}", e);
-            AppError::ServerError
+            SharedError::ServerError
         })?;
 
         Ok(AuthResponse::Success(AuthSuccess::new(

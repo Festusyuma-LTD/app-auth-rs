@@ -86,6 +86,6 @@ required — `Config::new` returns an error (`invalid client id` / `invalid clie
 
 ## Errors
 
-Failures surface as `shared::error::AppError::HttpMessage`. Config validation errors are
+Failures surface as `shared::error::ServiceError::HttpMessage`. Config validation errors are
 `500`s (they indicate a misconfigured deployment, not bad user input); a failed
 `exchange_code` call surfaces Cognito's `error_description` (or `error`) as a `400`.
