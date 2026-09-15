@@ -12,6 +12,6 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"
 axum = "0.8.9"
 axum-extra = { version = "0.10", features = ["cookie"] }
 time = "0.3"
-shared = { git = "https://github.com/Festusyuma-LTD/aws-shared-rs.git" }
+shared = { git = "https://github.com/Festusyuma-LTD/aws-shared-rs.git", tag = "0.0.000001" }
 serde = "1.0.229"
 serde_json = "1.0.151"
