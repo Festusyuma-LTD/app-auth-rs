@@ -12,6 +12,7 @@ where
     OpenApiRouter::new()
         .routes(routes!(controllers::auth::login))
         .routes(routes!(controllers::auth::callback))
+        .routes(routes!(controllers::auth::refresh))
         .routes(routes!(controllers::auth::logout))
         .with_state(state)
 }

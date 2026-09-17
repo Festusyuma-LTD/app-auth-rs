@@ -12,6 +12,8 @@ building blocks (cookie helpers, shared `axum` state) if you'd rather wire
   URL to Cognito's hosted login page.
 - **`exchange_code`**: exchanges an authorization code (plus the `code_verifier` from
   `login_url`) for tokens against Cognito's token endpoint.
+- **`refresh_token`**: exchanges a refresh token for a new access/ID token pair against
+  Cognito's token endpoint.
 - **`logout_url`**: builds the URL to Cognito's hosted logout page.
 
 None of these make any assumption about how `redirect_uri`/the PKCE verifier travel
@@ -28,7 +30,14 @@ let config = Config::new(
         .client_id("cognito-app-client-id")
         .client_secret("cognito-app-client-secret")
         // The full Cognito hosted-UI domain, not just a prefix.
-        .domain("https://your-domain.auth.us-east-1.amazoncognito.com"),
+        .domain("https://your-domain.auth.us-east-1.amazoncognito.com")
+        // Where this service is reachable from the browser: gateway base path (if any)
+        // + wherever you nest `auth::app` below. Omit if mounted at the root.
+        .base_path("/api/auth")
+        // `Max-Age`, in seconds, for the access/ID and refresh token cookies. Optional —
+        // default to 1800 (30 minutes) and 86400 (24 hours) respectively.
+        .token_expiration(3600)
+        .refresh_expiration(2_592_000),
 )?;
 
 let state = Arc::new(ServiceState {
@@ -58,10 +67,15 @@ Mounted under whatever prefix the parent app nests `auth::app(state)` at:
 | ------ | ----------- | ---------------------------------------------------- | ------------------------------------------------ |
 | GET    | `/login`    | query `redirect_uri`                                 | `LoginResponse` `{ url, code_verifier }`         |
 | POST   | `/callback` | JSON `CallbackRequest` `{ code, code_verifier, redirect_uri }` | `AuthResponse` (tokens, a challenge, or `null`); sets/updates the token cookies |
+| POST   | `/refresh`  | `refresh_token` cookie (set by `/callback`)          | `AuthResponse` with fresh tokens; updates the token cookies. `401` if the cookie is missing |
 | GET    | `/logout`   | query `redirect_uri`                                 | `LogoutResponse` `{ url }`; clears the token cookies |
 
 Each handler carries a `#[utoipa::path]` annotation, so the routes and their request/response
 schemas show up in the `utoipa::openapi::OpenApi` returned alongside the router.
+
+`/callback`, `/refresh`, and `/logout` all scope the `refresh_token` cookie's `Path` to the
+refresh endpoint using `Config::base_path` (see [Cookies](#cookies) below) instead of the
+whole app.
 
 Prefer wiring `AuthService` into your own handlers instead of using `auth::app`? A minimal
 pair built directly on the service:
@@ -84,36 +98,55 @@ async fn callback(
     redirect_uri: String,
 ) -> impl IntoResponse {
     let result = state.auth_service.exchange_code(&code, &code_verifier, &redirect_uri).await;
-    let jar = result.as_ref().map(auth::cookies::jar_for_response).unwrap_or_default();
+    let jar = result
+        .as_ref()
+        .map(|r| state.auth_service.jar_for_response(r))
+        .unwrap_or_default();
     (jar, /* turn `result` into your response */)
 }
 ```
 
 ## Cookies
 
-`auth::cookies` has small helpers for the three token cookies (`access_token`,
-`id_token`, `refresh_token`), all `httpOnly` + `secure`:
+`AuthService` builds the token cookies for you, all `httpOnly` + `secure`.
+`access_token`/`id_token` are scoped to `Path=/` with `Max-Age=Config::token_expiration`
+(defaults to `1800`, 30 minutes); `refresh_token` is scoped to just the refresh endpoint
+(`AuthService::refresh_token_path()`, i.e. `Config::base_path` + `/refresh`) with
+`Max-Age=Config::refresh_expiration` (defaults to `86400`, 24 hours), so it's never sent on
+any other request.
 
-- `jar_for_response(&AuthResponse) -> CookieJar` — builds the jar for a successful
-  `exchange_code` result (empty jar for anything else).
-- `expired_jar() -> CookieJar` — clears all three, for a logout endpoint.
-- `auth_cookie`/`expired_auth_cookie` — the lower-level builders those two use, if you
-  need to set/clear one cookie individually.
+- `AuthService::jar_for_response(&AuthResponse) -> CookieJar` — builds the jar for a
+  successful `exchange_code`/`refresh_token` result (empty jar for anything else).
+- `AuthService::expired_jar() -> CookieJar` — clears all three, for a logout endpoint.
+- `AuthService::refresh_token_path() -> String` — computes `{Config::base_path}/refresh`.
+
+`auth::app`'s handlers already call these for you. The lower-level free functions in
+`auth::cookies` (`jar_for_response`, `expired_jar`, `auth_cookie`, `expired_auth_cookie`)
+are also public if you need to build cookies outside of `AuthService` — but note
+`jar_for_response`/`expired_jar` there take the refresh path and `Max-Age`s as explicit
+arguments, so **always source them from the same `AuthService`** (via
+`refresh_token_path()`); cookies with a mismatched `Path` are distinct as far as the
+browser is concerned, so a mismatch silently fails to clear a previously-set
+`refresh_token` cookie on logout.
 
 ## Config
 
-Built via `Config::builder()...` passed to `Config::new()`. All three fields are
-required — `Config::new` returns an error (`invalid client id` / `invalid client secret`
-/ `invalid cognito domain`) if any are missing:
+Built via `Config::builder()...` passed to `Config::new()`. `client_id`/`client_secret`/
+`domain` are required — `Config::new` returns an error (`invalid client id` / `invalid
+client secret` / `invalid cognito domain`) if any are missing. The rest are optional:
 
-| Method             | Description                                                                 |
-| ------------------ | ---------------------------------------------------------------------------- |
-| `.client_id()`     | The Cognito app client ID.                                                   |
-| `.client_secret()` | The Cognito app client secret (used as Basic auth against the token endpoint). |
-| `.domain()`        | The full Cognito hosted-UI domain, e.g. `https://your-domain.auth.us-east-1.amazoncognito.com` — not just the domain prefix. |
+| Method                 | Required | Description                                                                 |
+| ---------------------- | -------- | ---------------------------------------------------------------------------- |
+| `.client_id()`         | yes      | The Cognito app client ID.                                                   |
+| `.client_secret()`     | yes      | The Cognito app client secret (used as Basic auth against the token endpoint). |
+| `.domain()`            | yes      | The full Cognito hosted-UI domain, e.g. `https://your-domain.auth.us-east-1.amazoncognito.com` — not just the domain prefix. |
+| `.base_path()`         | no       | Where this service is reachable from the browser's point of view: the gateway's base path (if any) plus wherever the consuming app nests `auth::app` (e.g. `"/api/auth"`). Defaults to `""` (mounted at the root). Used only to scope the `refresh_token` cookie's `Path`. |
+| `.token_expiration()`  | no       | `Max-Age`, in seconds, for the `access_token`/`id_token` cookies. Defaults to `1800` (30 minutes). |
+| `.refresh_expiration()`| no       | `Max-Age`, in seconds, for the `refresh_token` cookie. Defaults to `86400` (24 hours). |
 
 ## Errors
 
 Failures surface as `shared::error::ServiceError::HttpMessage`. Config validation errors are
 `500`s (they indicate a misconfigured deployment, not bad user input); a failed
-`exchange_code` call surfaces Cognito's `error_description` (or `error`) as a `400`.
+`exchange_code`/`refresh_token` call surfaces Cognito's `error_description` (or `error`) as a
+`400`.

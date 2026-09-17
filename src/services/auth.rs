@@ -1,7 +1,9 @@
 use crate::dto::auth::{AuthResponse, AuthSuccess, CognitoTokenError, CognitoTokens, LoginUrl};
 use crate::util::config::Config;
+use crate::util::cookies;
 use crate::util::error::ServiceResult;
 
+use axum_extra::extract::cookie::CookieJar;
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use rand::RngCore;
@@ -15,11 +17,20 @@ const SCOPES: &str = "openid email profile";
 
 pub struct AuthService {
     config: Arc<Config>,
+    http_client: reqwest::Client,
 }
 
 impl AuthService {
     pub fn new(config: Arc<Config>) -> Self {
-        Self { config }
+        let http_client = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .expect("failed to build reqwest client");
+
+        Self {
+            config,
+            http_client,
+        }
     }
 
     pub fn login_url(&self, redirect_uri: &str) -> ServiceResult<LoginUrl> {
@@ -47,6 +58,23 @@ impl AuthService {
         })
     }
 
+    pub fn refresh_token_path(&self) -> String {
+        format!("{}{}", self.config.base_path, cookies::REFRESH_TOKEN_ROUTE)
+    }
+
+    pub fn jar_for_response(&self, response: &AuthResponse) -> CookieJar {
+        cookies::jar_for_response(
+            response,
+            &self.refresh_token_path(),
+            self.config.token_expiration,
+            self.config.refresh_expiration,
+        )
+    }
+
+    pub fn expired_jar(&self) -> CookieJar {
+        cookies::expired_jar(&self.refresh_token_path())
+    }
+
     pub fn logout_url(&self, redirect_uri: &str) -> ServiceResult<String> {
         let domain = &self.config.domain;
 
@@ -70,15 +98,8 @@ impl AuthService {
     ) -> ServiceResult<AuthResponse> {
         let domain = &self.config.domain;
 
-        let http_client = reqwest::Client::builder()
-            .redirect(reqwest::redirect::Policy::none())
-            .build()
-            .map_err(|e| {
-                println!("{:?}", e);
-                SharedError::ServerError
-            })?;
-
-        let response = http_client
+        let response = self
+            .http_client
             .post(format!("{domain}/oauth2/token"))
             .basic_auth(&self.config.client_id, Some(&self.config.client_secret))
             .form(&[
@@ -118,6 +139,57 @@ impl AuthService {
             tokens.access_token,
             tokens.id_token,
             tokens.refresh_token,
+        )))
+    }
+
+    pub async fn refresh_token(&self, refresh_token: &str) -> ServiceResult<AuthResponse> {
+        let domain = &self.config.domain;
+
+        let response = self
+            .http_client
+            .post(format!("{domain}/oauth2/token"))
+            .basic_auth(&self.config.client_id, Some(&self.config.client_secret))
+            .form(&[
+                ("grant_type", "refresh_token"),
+                ("client_id", self.config.client_id.as_str()),
+                ("refresh_token", refresh_token),
+            ])
+            .send()
+            .await
+            .map_err(|e| {
+                println!("{:?}", e);
+                SharedError::ServerError
+            })?;
+
+        let success = response.status().is_success();
+        let body = response.bytes().await.map_err(|e| {
+            println!("{:?}", e);
+            SharedError::ServerError
+        })?;
+
+        if !success {
+            let message = serde_json::from_slice::<CognitoTokenError>(&body)
+                .map(|err| err.error_description.unwrap_or(err.error))
+                .unwrap_or_else(|_| "failed to refresh token".into());
+
+            return Err(SharedError::HttpMessage(400, message));
+        }
+
+        let tokens = serde_json::from_slice::<CognitoTokens>(&body).map_err(|e| {
+            println!("{:?}", e);
+            SharedError::ServerError
+        })?;
+
+        // Cognito's refresh grant doesn't rotate the refresh token by default, so the
+        // response omits it — fall back to the one that was used to make this call.
+        let refresh_token = tokens
+            .refresh_token
+            .unwrap_or_else(|| refresh_token.to_string());
+
+        Ok(AuthResponse::Success(AuthSuccess::new(
+            tokens.access_token,
+            tokens.id_token,
+            Some(refresh_token),
         )))
     }
 

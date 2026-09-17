@@ -7,6 +7,8 @@ use crate::util::state::ServiceStateType;
 use axum::Json;
 use axum::extract::{Query, State};
 use axum::response::IntoResponse;
+use axum_extra::extract::cookie::CookieJar;
+use shared::error::ServiceError;
 use shared::response::ServiceResponse;
 
 #[utoipa::path(
@@ -53,9 +55,43 @@ pub async fn callback(
 
     let jar = result
         .as_ref()
-        .map(cookies::jar_for_response)
+        .map(|response| state.auth_service.jar_for_response(response))
         .unwrap_or_default();
 
+    let response: ServiceResponse<AuthResponse> = result.into();
+
+    (jar, response)
+}
+
+#[utoipa::path(
+    post,
+    path = "/refresh",
+    tag = "auth",
+    params(
+        ("refresh_token" = String, Cookie, description = "Refresh token cookie set by a prior `/callback` call"),
+    ),
+    responses(
+        (status = 200, description = "New tokens for the refreshed session", body = AuthResponse),
+        (status = 400, description = "Cognito rejected the refresh token"),
+        (status = 401, description = "No refresh token cookie present"),
+    )
+)]
+pub async fn refresh(State(state): ServiceStateType, jar: CookieJar) -> impl IntoResponse {
+    let Some(refresh_token) = jar
+        .get(cookies::REFRESH_TOKEN_COOKIE)
+        .map(|cookie| cookie.value().to_string())
+    else {
+        let response: ServiceResponse<AuthResponse> =
+            ServiceError::HttpMessage(401, "missing refresh token".into()).into();
+
+        return (CookieJar::new(), response);
+    };
+
+    let result = state.auth_service.refresh_token(&refresh_token).await;
+    let jar = result
+        .as_ref()
+        .map(|response| state.auth_service.jar_for_response(response))
+        .unwrap_or_default();
     let response: ServiceResponse<AuthResponse> = result.into();
 
     (jar, response)
@@ -74,7 +110,7 @@ pub async fn logout(
     State(state): ServiceStateType,
     Query(query): Query<LogoutQuery>,
 ) -> impl IntoResponse {
-    let jar = cookies::expired_jar();
+    let jar = state.auth_service.expired_jar();
 
     println!("{:#?}", jar);
     let response: ServiceResponse<LogoutResponse> = state
