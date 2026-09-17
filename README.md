@@ -2,9 +2,9 @@
 
 Library crate for signing users in through Amazon Cognito's hosted/managed login (the
 Authorization Code + PKCE flow), and for exchanging the resulting code for tokens. It
-provides the service logic and a couple of building blocks (cookie helpers, shared
-`axum` state) — it does not expose any HTTP routes of its own; the consuming app wires
-`AuthService` into its own controllers.
+provides the service logic, ready-made `axum` routes (`auth::app`), and a couple of
+building blocks (cookie helpers, shared `axum` state) if you'd rather wire
+`AuthService` into your own controllers instead.
 
 ## What it does
 
@@ -34,9 +34,37 @@ let config = Config::new(
 let state = Arc::new(ServiceState {
     auth_service: AuthService::new(Arc::new(config)),
 });
+
+// `auth::app` returns a `utoipa_axum::router::OpenApiRouter`, so its OpenAPI paths/schemas
+// can be merged into the rest of the app's spec before splitting into a plain `axum::Router`.
+use utoipa_axum::router::OpenApiRouter;
+
+let (router, openapi) = OpenApiRouter::new()
+    .nest("/auth", auth::app(state))
+    .split_for_parts();
+
+let app: axum::Router = router; // serve `openapi` (e.g. via utoipa-swagger-ui) however you like
 ```
 
-A minimal pair of `axum` handlers built on top of it:
+If you don't care about the OpenAPI spec, `OpenApiRouter<S>` also converts directly into
+`axum::Router<S>` via `Into`, so `axum::Router::new().nest("/auth", auth::app(state).into())`
+works too.
+
+## Routes
+
+Mounted under whatever prefix the parent app nests `auth::app(state)` at:
+
+| Method | Path        | Query/Body                                          | Response                                        |
+| ------ | ----------- | ---------------------------------------------------- | ------------------------------------------------ |
+| GET    | `/login`    | query `redirect_uri`                                 | `LoginResponse` `{ url, code_verifier }`         |
+| POST   | `/callback` | JSON `CallbackRequest` `{ code, code_verifier, redirect_uri }` | `AuthResponse` (tokens, a challenge, or `null`); sets/updates the token cookies |
+| GET    | `/logout`   | query `redirect_uri`                                 | `LogoutResponse` `{ url }`; clears the token cookies |
+
+Each handler carries a `#[utoipa::path]` annotation, so the routes and their request/response
+schemas show up in the `utoipa::openapi::OpenApi` returned alongside the router.
+
+Prefer wiring `AuthService` into your own handlers instead of using `auth::app`? A minimal
+pair built directly on the service:
 
 ```rust
 use auth::state::ServiceStateType;

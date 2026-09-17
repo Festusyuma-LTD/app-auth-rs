@@ -9,6 +9,15 @@ use axum::extract::{Query, State};
 use axum::response::IntoResponse;
 use shared::response::ServiceResponse;
 
+#[utoipa::path(
+    get,
+    path = "/login",
+    tag = "auth",
+    params(LoginQuery),
+    responses(
+        (status = 200, description = "Cognito hosted-login URL and PKCE code verifier", body = LoginResponse),
+    )
+)]
 pub async fn login(
     State(state): ServiceStateType,
     Query(query): Query<LoginQuery>,
@@ -23,6 +32,16 @@ pub async fn login(
         .into()
 }
 
+#[utoipa::path(
+    post,
+    path = "/callback",
+    tag = "auth",
+    request_body = CallbackRequest,
+    responses(
+        (status = 200, description = "Tokens, a challenge to complete, or a next-step marker", body = AuthResponse),
+        (status = 400, description = "Cognito rejected the code exchange"),
+    )
+)]
 pub async fn callback(
     State(state): ServiceStateType,
     Json(payload): Json<CallbackRequest>,
@@ -42,6 +61,15 @@ pub async fn callback(
     (jar, response)
 }
 
+#[utoipa::path(
+    get,
+    path = "/logout",
+    tag = "auth",
+    params(LogoutQuery),
+    responses(
+        (status = 200, description = "Cognito hosted-logout URL", body = LogoutResponse),
+    )
+)]
 pub async fn logout(
     State(state): ServiceStateType,
     Query(query): Query<LogoutQuery>,

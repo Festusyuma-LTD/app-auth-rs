@@ -1,17 +1,17 @@
 use crate::controllers;
 use crate::util::state::ServiceState;
 
-use axum::Router;
-use axum::routing::{get, post};
 use std::sync::Arc;
+use utoipa_axum::router::OpenApiRouter;
+use utoipa_axum::routes;
 
-pub fn app<S>(state: Arc<ServiceState>) -> Router<S>
+pub fn app<S>(state: Arc<ServiceState>) -> OpenApiRouter<S>
 where
     S: Clone + Send + Sync + 'static,
 {
-    Router::new()
-        .route("/login", get(controllers::auth::login))
-        .route("/callback", post(controllers::auth::callback))
-        .route("/logout", get(controllers::auth::logout))
+    OpenApiRouter::new()
+        .routes(routes!(controllers::auth::login))
+        .routes(routes!(controllers::auth::callback))
+        .routes(routes!(controllers::auth::logout))
         .with_state(state)
 }
