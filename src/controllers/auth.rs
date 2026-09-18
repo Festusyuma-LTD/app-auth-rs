@@ -129,7 +129,6 @@ pub async fn logout(
 ) -> impl IntoResponse {
     let jar = state.auth_service.expired_jar();
 
-    println!("{:#?}", jar);
     let response: ServiceResponse<LogoutResponse> = state
         .auth_service
         .logout_url(&query.redirect_uri)
