@@ -1,12 +1,13 @@
 use crate::dto::auth::{
-    AuthResponse, CallbackRequest, LoginQuery, LoginResponse, LogoutQuery, LogoutResponse,
+    AuthResponse, CallbackRequest, CurrentUser, LoginQuery, LoginResponse, LogoutQuery,
+    LogoutResponse,
 };
 use crate::util::cookies;
 use crate::util::state::ServiceStateType;
 
-use axum::Json;
 use axum::extract::{Query, State};
 use axum::response::IntoResponse;
+use axum::{Extension, Json};
 use axum_extra::extract::cookie::CookieJar;
 use shared::error::ServiceError;
 use shared::response::ServiceResponse;
@@ -95,6 +96,22 @@ pub async fn refresh(State(state): ServiceStateType, jar: CookieJar) -> impl Int
     let response: ServiceResponse<AuthResponse> = result.into();
 
     (jar, response)
+}
+
+#[utoipa::path(
+    get,
+    path = "/verify",
+    tag = "auth",
+    params(
+        ("access_token" = String, Cookie, description = "Access token cookie set by a prior `/callback` or `/refresh` call"),
+    ),
+    responses(
+        (status = 200, description = "The currently authenticated user", body = CurrentUser),
+        (status = 401, description = "No valid access_token cookie present"),
+    )
+)]
+pub async fn verify(Extension(user): Extension<CurrentUser>) -> ServiceResponse<CurrentUser> {
+    ServiceResponse::Ok(user)
 }
 
 #[utoipa::path(

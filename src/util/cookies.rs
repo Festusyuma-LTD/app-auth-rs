@@ -52,11 +52,6 @@ pub fn jar_for_response(
         }
 
         if let Some(refresh_token) = &success.refresh_token {
-            println!(
-                "refresh {}, {}, {}",
-                refresh_token, refresh_token_path, refresh_expiration,
-            );
-
             jar = jar.add(auth_cookie(
                 REFRESH_TOKEN_COOKIE,
                 refresh_token.clone(),

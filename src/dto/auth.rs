@@ -84,3 +84,11 @@ pub struct LogoutQuery {
 pub struct LogoutResponse {
     pub url: String,
 }
+
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+pub struct CurrentUser {
+    pub sub: String,
+    pub username: String,
+    #[serde(flatten)]
+    pub attributes: HashMap<String, serde_json::Value>,
+}

@@ -9,6 +9,7 @@ pub use app::app;
 pub use util::config::Config;
 pub use util::cookies;
 pub use util::error::ServiceResult;
+pub use util::middleware;
 pub use util::state;
 
 pub use services::auth;

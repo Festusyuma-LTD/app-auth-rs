@@ -14,6 +14,8 @@ building blocks (cookie helpers, shared `axum` state) if you'd rather wire
   `login_url`) for tokens against Cognito's token endpoint.
 - **`refresh_token`**: exchanges a refresh token for a new access/ID token pair against
   Cognito's token endpoint.
+- **`current_user`**: resolves an access token to the Cognito user it belongs to, via
+  `/oauth2/userInfo`. Results are cached per access token for 30 seconds.
 - **`logout_url`**: builds the URL to Cognito's hosted logout page.
 
 None of these make any assumption about how `redirect_uri`/the PKCE verifier travel
@@ -68,7 +70,12 @@ Mounted under whatever prefix the parent app nests `auth::app(state)` at:
 | GET    | `/login`    | query `redirect_uri`                                 | `LoginResponse` `{ url, code_verifier }`         |
 | POST   | `/callback` | JSON `CallbackRequest` `{ code, code_verifier, redirect_uri }` | `AuthResponse` (tokens, a challenge, or `null`); sets/updates the token cookies |
 | POST   | `/refresh`  | `refresh_token` cookie (set by `/callback`)          | `AuthResponse` with fresh tokens; updates the token cookies. `401` if the cookie is missing |
+| GET    | `/verify`   | `access_token` cookie (set by `/callback`/`/refresh`) | `CurrentUser`. `401` if the cookie is missing/invalid/expired |
 | GET    | `/logout`   | query `redirect_uri`                                 | `LogoutResponse` `{ url }`; clears the token cookies |
+
+`/verify` is `populate_user` + `require_user` (see [Middleware](#middleware)) attached to a
+single route — it's the simplest way to check "is this access token still good" and get the
+user back in one call, scoped so those two middlewares don't affect the other routes above.
 
 Each handler carries a `#[utoipa::path]` annotation, so the routes and their request/response
 schemas show up in the `utoipa::openapi::OpenApi` returned alongside the router.
@@ -128,6 +135,43 @@ arguments, so **always source them from the same `AuthService`** (via
 `refresh_token_path()`); cookies with a mismatched `Path` are distinct as far as the
 browser is concerned, so a mismatch silently fails to clear a previously-set
 `refresh_token` cookie on logout.
+
+## Middleware
+
+`auth::middleware` has two `axum` middlewares, meant to be layered together on any router
+that needs to know who's calling:
+
+- **`populate_user`** — reads the `access_token` cookie, resolves it to a `CurrentUser`
+  via `AuthService::current_user` (Cognito's `/oauth2/userInfo`, cached for 30s per
+  token), and inserts it into the request's extensions. Never rejects the request — a
+  missing, invalid, or expired token just means no `CurrentUser` gets inserted, so it's
+  safe to apply globally even to routes that don't require auth.
+- **`require_user`** — rejects with `401` unless a `CurrentUser` is already in the
+  request's extensions. Must run *after* `populate_user` in the layer stack (`axum`
+  applies the last-added `.layer()` outermost, so add `populate_user` last); on its own,
+  with nothing upstream setting a `CurrentUser`, it always rejects.
+
+Handlers read the resolved user with the usual `axum::Extension<auth::dto::auth::CurrentUser>`
+extractor. `CurrentUser` always has `sub`/`username`; anything else Cognito returns
+(`email`, `email_verified`, custom attributes, ...) is in `attributes: HashMap<String,
+serde_json::Value>`, since that depends on the access token's scopes.
+
+```rust
+use auth::dto::auth::CurrentUser;
+use axum::{Extension, Router, middleware};
+
+let protected = Router::new()
+    .route("/me", axum::routing::get(|Extension(user): Extension<CurrentUser>| async move {
+        user.sub
+    }))
+    .layer(middleware::from_fn(auth::middleware::require_user));
+
+let app = Router::new()
+    .merge(protected) // 401s without a valid access_token cookie
+    .route("/public", axum::routing::get(|| async { "ok" })) // works either way
+    .layer(middleware::from_fn_with_state(state.clone(), auth::middleware::populate_user))
+    .with_state(state);
+```
 
 ## Config
 
